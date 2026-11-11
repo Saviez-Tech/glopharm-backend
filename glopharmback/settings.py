@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'authentication',
     'ecommerce',
     'referrals',
+    'labtest',
 ]
 
 MIDDLEWARE = [
