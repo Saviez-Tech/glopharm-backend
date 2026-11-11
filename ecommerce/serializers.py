@@ -141,3 +141,29 @@ class OrderSerializer(serializers.ModelSerializer):
             "created_at",
             "items",
         )
+        
+
+
+class OrderListSerializer(serializers.ModelSerializer):
+    """Compact card for the 'My orders' list."""
+
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    total_quantity = serializers.SerializerMethodField()
+    items = OrderItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Order
+        fields = (
+            "order_number",
+            "status",
+            "status_label",
+            "payment_status",
+            "total",
+            "created_at",
+            "total_quantity",
+            "items",
+        )
+
+    def get_total_quantity(self, obj):
+        # Uses the prefetched items, so no extra query.
+        return sum(item.quantity for item in obj.items.all())

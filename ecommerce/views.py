@@ -1,16 +1,12 @@
 from django.db.models import Prefetch, Q
 from rest_framework.views import APIView
 
-from .models import Product, ProductSpecification
+from .models import OrderItem, Product, ProductSpecification
 from .pagination import StandardPagination
-from .serializers import ProductDetailSerializer, ProductListSerializer
-from .utils import APIResponse  
-from rest_framework.permissions import AllowAny
+from .serializers import OrderListSerializer, ProductDetailSerializer, ProductListSerializer
+from .utils import APIResponse, OrderPagination  
+from rest_framework.permissions import AllowAny, IsAuthenticated
 import json
-
-from rest_framework.permissions import AllowAny
-from rest_framework.views import APIView
-
 from . import paystack
 from .models import Order, Payment
 from .paystack import PaystackError
@@ -299,3 +295,54 @@ class PaystackWebhookView(APIView):
 
         # Always 200 for valid, signed requests so Paystack stops retrying.
         return APIResponse.success(message="Webhook received.")
+    
+    
+
+
+class OrderListView(APIView):
+    """
+    GET /orders/                     -> my orders, newest first
+    GET /orders/?status=delivered    -> filter by status
+    Logged-in users only; always scoped to the caller's own orders.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = (
+            Order.objects.filter(user=request.user)
+            .only("id", "order_number", "status", "payment_status", "total", "created_at")
+            .prefetch_related(
+                Prefetch(
+                    "items",
+                    queryset=OrderItem.objects.only(
+                        "id",
+                        "order_id",
+                        "product_id",
+                        "product_name",
+                        "product_image",
+                        "unit_price",
+                        "quantity",
+                    ),
+                )
+            )
+        )
+
+        status = request.query_params.get("status")
+        if status:
+            if status not in Order.Status.values:
+                return APIResponse.error("Invalid status filter.", status_code=400)
+            queryset = queryset.filter(status=status)
+
+        paginator = OrderPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = OrderListSerializer(page, many=True)
+
+        return APIResponse.success(
+            message="Orders retrieved successfully.",
+            data=paginator.get_paginated_data(serializer.data),
+        )
+        
+
+
+

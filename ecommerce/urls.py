@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import PayOrderView,CheckoutView, PaystackWebhookView, ProductDetailView, ProductListView, ProductSearchView, VerifyPaymentView
+from .views import OrderListView, PayOrderView,CheckoutView, PaystackWebhookView, ProductDetailView, ProductListView, ProductSearchView, VerifyPaymentView
 
 urlpatterns = [
     path("products/", ProductListView.as_view(), name="product-list"),
@@ -12,4 +12,6 @@ urlpatterns = [
     path("orders/payment/verify/", VerifyPaymentView.as_view(), name="payment-verify"),
     path("orders/payment/webhook/", PaystackWebhookView.as_view(), name="payment-webhook"),
     path("orders/<str:order_number>/pay/", PayOrderView.as_view(), name="order-pay"),
+    path("orders/", OrderListView.as_view(), name="order-list"),
+    
 ]
