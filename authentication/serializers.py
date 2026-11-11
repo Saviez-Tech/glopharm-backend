@@ -10,6 +10,9 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+import re
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -114,3 +117,63 @@ class CustomTokenRefreshSerializer(TokenRefreshSerializer):
             "access": data["access"],
             "refresh": data.get("refresh", attrs["refresh"])
         }
+
+
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = ("name", "phone_number", "address", "city", "state")
+
+    def validate_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name cannot be blank.")
+        return value
+
+    def validate_phone_number(self, value):
+        if value is None:
+            return value
+        value = value.strip()
+        if value and not re.fullmatch(r"\+?[0-9\s\-]{7,20}", value):
+            raise serializers.ValidationError("Enter a valid phone number.")
+        return value
+
+
+ 
+class ProfileDetailSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source="user.username", read_only=True)
+    email = serializers.EmailField(source="user.email", read_only=True)
+ 
+    class Meta:
+        model = UserProfile
+        fields = ("username", "email", "name", "phone_number", "address", "city", "state")
+ 
+ 
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect.")
+        return value
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+
+        if attrs["old_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {"new_password": ["New password must be different from the old password."]}
+            )
+
+        # Runs the validators configured in AUTH_PASSWORD_VALIDATORS.
+        try:
+            validate_password(attrs["new_password"], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"new_password": list(exc.messages)})
+
+        return attrs
