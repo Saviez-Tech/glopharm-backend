@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     # my apps
     'authentication',
     'ecommerce',
+    'referrals',
 ]
 
 MIDDLEWARE = [
@@ -158,3 +159,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+
+POINT_VALUE_NAIRA = 5               
+REFERRAL_REWARD_POINTS = 500
+REFERRED_FRIEND_DISCOUNT = 1000
+PURCHASE_CASHBACK_PERCENT = 5      
+REFERRAL_LINK_BASE = "https://glopharm.ng/ref/"

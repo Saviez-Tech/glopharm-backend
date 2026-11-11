@@ -66,6 +66,7 @@ class CheckoutSerializer(serializers.Serializer):
     items = serializers.ListField(
         child=serializers.DictField(), allow_empty=False, max_length=MAX_ITEMS
     )
+    referral_code = serializers.CharField(required=False, allow_blank=True)
 
     def validate_customer_phone(self, value):
         if not PHONE_RE.fullmatch(value):

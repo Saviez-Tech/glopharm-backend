@@ -9,6 +9,7 @@ from .models import Product
 
 from . import paystack
 from .models import Order, OrderItem, OrderStatusHistory, Payment
+from referrals.referalservice import get_first_purchase_discount
 
 
 class CheckoutError(Exception):
@@ -71,6 +72,10 @@ def create_order(*, user, data):
         )
         product.stock -= quantity
 
+        referral_discount = Decimal("0.00")
+    if user is not None and user.is_authenticated:
+        referral_discount = get_first_purchase_discount(user, subtotal)
+
     order = Order.objects.create(
         user=user if user is not None and user.is_authenticated else None,
         customer_name=data["customer_name"],
@@ -80,7 +85,8 @@ def create_order(*, user, data):
         shipping_city=data["shipping_city"],
         shipping_state=data["shipping_state"],
         subtotal=subtotal,
-        total=subtotal,  # referral discount is wired in a later step
+        referral_discount=referral_discount,
+        total=subtotal - referral_discount,
     )
 
     OrderItem.objects.bulk_create([OrderItem(order=order, **item) for item in order_items])
@@ -210,3 +216,41 @@ def mark_payment_failed(reference, message=""):
         gateway_response=message[:255],
         updated_at=timezone.now(),
     )
+    
+    
+DEFAULT_STATUS_NOTES = {
+    Order.Status.PROCESSING: "Your order is being prepared",
+    Order.Status.OUT_FOR_DELIVERY: "Your order is on its way",
+    Order.Status.DELIVERED: "Your order has been delivered",
+    Order.Status.CANCELLED: "Your order was cancelled",
+}
+
+
+def log_status_change(order, note=""):
+    entry = OrderStatusHistory.objects.create(
+        order=order,
+        status=order.status,
+        note=note or DEFAULT_STATUS_NOTES.get(order.status, ""),
+    )
+
+    if order.status == Order.Status.DELIVERED:
+        from referrals.referalservice import award_delivery_rewards 
+
+        award_delivery_rewards(order)
+
+    return entry
+
+
+@transaction.atomic
+def update_order_status(order, new_status, note=""):
+    """Move an order to a new status and add the timeline entry."""
+    order = Order.objects.select_for_update().get(pk=order.pk)
+    if order.status == new_status:
+        return order
+
+    order.status = new_status
+    order.save(update_fields=["status", "updated_at"])
+    log_status_change(order, note)
+    return order
+
+

@@ -146,6 +146,14 @@ class CheckoutView(APIView):
         serializer = CheckoutSerializer(data=request.data)
         if not serializer.is_valid():
             return APIResponse.validation_error(serializer.errors)
+        from referrals.referalservice import set_referrer  
+
+        code = serializer.validated_data.get("referral_code")
+        if code:
+            if not request.user.is_authenticated:
+                return APIResponse.error("Please log in or sign up to use a referral code.", status_code=400)
+            if not set_referrer(request.user, code):
+                return APIResponse.error("This referral code can't be applied to your account.", status_code=400)
 
         try:
             order = create_order(user=request.user, data=serializer.validated_data)

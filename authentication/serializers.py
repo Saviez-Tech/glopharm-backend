@@ -3,6 +3,9 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from rest_framework import serializers
 
+from referrals.models import RewardAccount
+from referrals.referalservice import set_referrer
+
 from .models import UserProfile
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import UserProfile
@@ -17,6 +20,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 
 class RegisterSerializer(serializers.ModelSerializer):
     name = serializers.CharField(max_length=100)
+    referral_code = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     class Meta:
         model = User
@@ -25,6 +29,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             'email',
             'password',
             'name',
+            'referral_code',
         ]
         extra_kwargs = {
             'password': {
@@ -40,19 +45,23 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
 
         return value
+    def validate_referral_code(self, value):
+        value = value.strip().upper()
+        if value and not RewardAccount.objects.filter(referral_code=value).exists():
+            raise serializers.ValidationError("Invalid referral code.")
+        return value
 
     @transaction.atomic
     def create(self, validated_data):
         name = validated_data.pop('name')
+        referral_code = validated_data.pop('referral_code', '')   
 
-        user = User.objects.create_user(
-            **validated_data
-        )
+        user = User.objects.create_user(**validated_data)
 
-        UserProfile.objects.create(
-            user=user,
-            name=name
-        )
+        UserProfile.objects.create(user=user, name=name)
+
+        if referral_code:                                          
+            set_referrer(user, referral_code)
 
         return user
 
