@@ -23,4 +23,5 @@ urlpatterns = [
     path('api/ecommerce/', include('ecommerce.urls')),
     path('api/referrals/', include('referrals.urls')),
     path('api/lab-tests/', include('labtest.urls')),
+    path('api/gload/', include('administrator.urls')),
 ]
