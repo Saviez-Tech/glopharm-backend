@@ -2,7 +2,9 @@
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework import status
-from .serializers import ProfileDetailSerializer, RegisterSerializer,ChangePasswordSerializer, UserProfileSerializer
+
+from authentication.passwordreset import PasswordResetError, request_password_reset, reset_user_password
+from .serializers import ForgotPasswordSerializer, ProfileDetailSerializer, RegisterSerializer,ChangePasswordSerializer, ResetPasswordSerializer, UserProfileSerializer
 from .utils import APIResponse
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import LoginSerializer
@@ -148,3 +150,65 @@ class ChangePasswordView(APIView):
         update_session_auth_hash(request, user)
 
         return APIResponse.success(message="Password changed successfully.")
+    
+
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return APIResponse.validation_error(serializer.errors)
+
+        email = serializer.validated_data["email"]
+
+        request_password_reset(email)
+
+        return APIResponse.success(
+            message=(
+                "If an account exists with this email, "
+                "a password reset OTP will be sent."
+            ),
+            data=None,
+            status_code=200
+        )
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return APIResponse.validation_error(serializer.errors)
+
+        otp = serializer.validated_data["otp"]
+        new_password = serializer.validated_data["new_password"]
+
+        ip_address = request.META.get("REMOTE_ADDR", "")
+
+        try:
+            user = reset_user_password(
+                otp=otp,
+                new_password=new_password,
+                ip_address=ip_address
+            )
+
+        except PasswordResetError as exc:
+            return APIResponse.error(
+                message=str(exc),
+                status_code=400
+            )
+
+        return APIResponse.success(
+            message="Password reset successfully. You can now log in.",
+            data={
+                "user_id": user.id,
+                "email": user.email,
+            },
+            status_code=200
+        )

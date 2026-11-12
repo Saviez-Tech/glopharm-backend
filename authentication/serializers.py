@@ -186,3 +186,26 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({"new_password": list(exc.messages)})
 
         return attrs
+    
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    otp = serializers.RegexField(
+        regex=r"^\d{8}$",
+        error_messages={
+            "invalid": "OTP must be exactly 8 digits."
+        }
+    )
+
+    new_password = serializers.CharField(
+        write_only=True,
+        trim_whitespace=False,
+        min_length=8
+    )
