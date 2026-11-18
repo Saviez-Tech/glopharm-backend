@@ -112,6 +112,7 @@ class LoginSerializer(serializers.Serializer):
                 "username": user.username,
                 "email": user.email,
                 "name": name,
+                'is_staff': user.is_staff,
             }
         }
 
