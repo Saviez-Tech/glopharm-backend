@@ -6,7 +6,17 @@ from django.db.models.functions import Coalesce
 from rest_framework.permissions import IsAdminUser
 
 from administrator.filters import PeriodFilterError, apply_period_filter
-from administrator.helper import admin_lab_tests, distinct_customers, paid_payments, stat_card, with_display_status,stock_status,TWO_PLACES
+from administrator.helper import (
+    DashboardPeriodError,
+    admin_lab_tests,
+    dashboard_period,
+    distinct_customers,
+    paid_payments,
+    stat_card,
+    stock_status,
+    TWO_PLACES,
+    with_display_status,
+)
 from administrator.service import PrescribeError, save_prescription
 from ecommerce.models import Order, Product
 from ecommerce.orderservice import cancel_order, update_order_status
@@ -450,36 +460,83 @@ class AdminPrescribeView(APIView):
  
  
 class AdminDashboardStatsView(APIView):
-    """GET /admin/dashboard/stats/ -> the four top cards."""
+    """
+    GET /admin/dashboard/stats/?range=week|month|year or ?date=YYYY-MM-DD
+    Without a period filter, revenue, customer, and transaction cards are all-time.
+    With a filter, they use the same period as the revenue chart.
+    Product count remains the all-time catalog total.
+    """
  
     permission_classes = [AdminPermission]
  
     def get(self, request):
         week_ago = timezone.now() - timedelta(days=7)
         payments = paid_payments()
-        before = Q(paid_at__lt=week_ago)
+        product_stats = stat_card(
+            Product.objects.count(),
+            Product.objects.filter(created_at__lt=week_ago).count(),
+        )
+
+        if "date" not in request.query_params and "range" not in request.query_params:
+            before = Q(paid_at__lt=week_ago)
+            totals = payments.aggregate(
+                revenue=Sum("amount"),
+                revenue_then=Sum("amount", filter=before),
+                transactions=Count("id"),
+                transactions_then=Count("id", filter=before),
+            )
+            data = {
+                "total_revenue": stat_card(
+                    totals["revenue"] or 0, totals["revenue_then"] or 0, money=True
+                ),
+                "total_customers": stat_card(
+                    distinct_customers(payments),
+                    distinct_customers(payments.filter(before)),
+                ),
+                "total_transactions": stat_card(
+                    totals["transactions"], totals["transactions_then"]
+                ),
+                "total_products": product_stats,
+            }
+            return APIResponse.success(
+                message="Dashboard stats retrieved successfully.", data=data
+            )
+
+        try:
+            period = dashboard_period(request.query_params, timezone.localdate())
+        except DashboardPeriodError as exc:
+            return APIResponse.error(str(exc), status_code=400)
+
+        current_period = Q(
+            paid_at__date__gte=period["start"],
+            paid_at__date__lt=period["end"],
+        )
+        previous_period = Q(
+            paid_at__date__gte=period["previous_start"],
+            paid_at__date__lt=period["previous_end"],
+        )
  
         totals = payments.aggregate(
-            revenue=Sum("amount"),
-            revenue_then=Sum("amount", filter=before),
-            transactions=Count("id"),
-            transactions_then=Count("id", filter=before),
+            revenue=Sum("amount", filter=current_period),
+            revenue_then=Sum("amount", filter=previous_period),
+            transactions=Count("id", filter=current_period),
+            transactions_then=Count("id", filter=previous_period),
         )
  
         data = {
+            "range": period["range"],
+            "date": period["date"].isoformat() if period["date"] else None,
             "total_revenue": stat_card(
                 totals["revenue"] or 0, totals["revenue_then"] or 0, money=True
             ),
             "total_customers": stat_card(
-                distinct_customers(payments), distinct_customers(payments.filter(before))
+                distinct_customers(payments.filter(current_period)),
+                distinct_customers(payments.filter(previous_period)),
             ),
             "total_transactions": stat_card(
                 totals["transactions"], totals["transactions_then"]
             ),
-            "total_products": stat_card(
-                Product.objects.count(),
-                Product.objects.filter(created_at__lt=week_ago).count(),
-            ),
+            "total_products": product_stats,
         }
         return APIResponse.success(message="Dashboard stats retrieved successfully.", data=data)
  
@@ -538,6 +595,7 @@ class AdminPopularProductsView(APIView):
 class AdminRevenueChartView(APIView):
     """
     GET /admin/dashboard/revenue-chart/?range=week|month|year   (default week)
+      date=YYYY-MM-DD -> one point for the selected date (overrides range)
       week  -> last 7 days, one point per day
       month -> last 30 days, one point per day
       year  -> last 12 months, one point per month
@@ -551,29 +609,33 @@ class AdminRevenueChartView(APIView):
         return value.date() if isinstance(value, datetime) else value
  
     def get(self, request):
-        chart_range = request.query_params.get("range", "week")
-        if chart_range not in ("week", "month", "year"):
-            return APIResponse.error("range must be week, month or year.", status_code=400)
- 
-        today = timezone.localdate()
-        if chart_range == "year":
-            buckets = []
-            for back in range(11, -1, -1):
-                month_index = today.year * 12 + (today.month - 1) - back
-                buckets.append(date(month_index // 12, month_index % 12 + 1, 1))
+        try:
+            period = dashboard_period(request.query_params, timezone.localdate())
+        except DashboardPeriodError as exc:
+            return APIResponse.error(str(exc), status_code=400)
+
+        chart_range = period["range"]
+        buckets = period["buckets"]
+        if chart_range == "day":
+            trunc = TruncDate("paid_at")
+            label = lambda d: f"{d:%b} {d.day}"
+        elif chart_range == "year":
             trunc = TruncMonth("paid_at")
             label = lambda d: d.strftime("%b")
         else:
-            days = 7 if chart_range == "week" else 30
-            buckets = [today - timedelta(days=n) for n in range(days - 1, -1, -1)]
             trunc = TruncDate("paid_at")
             label = (lambda d: d.strftime("%a")) if chart_range == "week" else (
                 lambda d: f"{d:%b} {d.day}"
             )
  
+        payments = paid_payments()
+        payments = payments.filter(
+            paid_at__date__gte=period["start"],
+            paid_at__date__lt=period["end"],
+        )
+
         rows = (
-            paid_payments()
-            .filter(paid_at__date__gte=buckets[0])
+            payments
             .annotate(bucket=trunc)
             .values("bucket")
             .annotate(revenue=Sum("amount"), transactions=Count("id"))

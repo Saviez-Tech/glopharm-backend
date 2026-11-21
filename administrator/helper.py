@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta
 from decimal import Decimal
  
 from django.contrib.auth import get_user_model
@@ -15,6 +16,67 @@ LOW_STOCK_THRESHOLD = 10  # at or below this a product shows as "Low Stock"
 TWO_PLACES = Decimal("0.01")
  
  
+
+class DashboardPeriodError(ValueError):
+    pass
+
+
+def dashboard_period(params, today):
+    date_value = params.get("date")
+    if date_value is not None:
+        try:
+            selected_date = datetime.strptime(date_value, "%Y-%m-%d").date()
+            if selected_date.isoformat() != date_value:
+                raise ValueError
+        except ValueError:
+            raise DashboardPeriodError("date must be in the format YYYY-MM-DD.")
+
+        return {
+            "range": "day",
+            "buckets": [selected_date],
+            "start": selected_date,
+            "end": selected_date + timedelta(days=1),
+            "previous_start": selected_date - timedelta(days=1),
+            "previous_end": selected_date,
+            "date": selected_date,
+        }
+
+    chart_range = params.get("range", "week")
+    if chart_range not in ("week", "month", "year"):
+        raise DashboardPeriodError("range must be week, month or year.")
+
+    if chart_range == "year":
+        current_month = today.year * 12 + today.month - 1
+        buckets = [
+            date((current_month - back) // 12, (current_month - back) % 12 + 1, 1)
+            for back in range(11, -1, -1)
+        ]
+        start = buckets[0]
+        next_month = today.year * 12 + today.month
+        end = date(next_month // 12, next_month % 12 + 1, 1)
+        previous_month = current_month - 23
+        previous_start = date(
+            previous_month // 12, previous_month % 12 + 1, 1
+        )
+        previous_end = start
+    else:
+        days = 7 if chart_range == "week" else 30
+        buckets = [today - timedelta(days=n) for n in range(days - 1, -1, -1)]
+        start = buckets[0]
+        end = today + timedelta(days=1)
+        previous_start = start - timedelta(days=days)
+        previous_end = start
+
+    return {
+        "range": chart_range,
+        "buckets": buckets,
+        "start": start,
+        "end": end,
+        "previous_start": previous_start,
+        "previous_end": previous_end,
+        "date": None,
+    }
+
 
 def with_display_status(queryset):
     """
@@ -80,9 +142,8 @@ def distinct_customers(queryset):
  
 def stat_card(now, then, money=False):
     """
-    `now` is the all-time total; `then` is the same total as it stood a week ago.
-    change_percent is how much the total grew over that week (null if there was
-    nothing a week ago to compare with).
+    `now` is the current metric and `then` is its comparison-period value.
+    change_percent is null when there is no comparison value.
     """
     now, then = Decimal(now), Decimal(then)
     change = round(float((now - then) / then * 100), 1) if then else None

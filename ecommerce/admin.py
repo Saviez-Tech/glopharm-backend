@@ -1,8 +1,9 @@
 from django.contrib import admin
-from .models import Order, Product, ProductSpecification
+from .models import Order, Product, ProductSpecification,Payment
 
 
 admin.site.register(Order)
+admin.site.register(Payment)
 class ProductSpecificationInline(admin.TabularInline):
     model = ProductSpecification
     extra = 3
